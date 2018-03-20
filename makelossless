@@ -25,6 +25,11 @@ _get_ffv1_version(){
     FFV1_VERSION=$(ffmpeg -debug 1 -i "${1}" -vframes 1 -f null - 2>&1 | grep -m 1 "^\[ffv1" | grep -o "ver:[^ ]*" | cut -d":" -f2)
 }
 
+_check_saturation(){
+    # with early ffv1, using a saturation level check to attempt to detect corruption, since there is no embedded fixity before version 3
+    signalstats,metadata=print:key=lavfi.signalstats.SATMAX:value=170:function=greater:file=/tmp/hi
+}
+
 # command-line options to set mediaid and original variables
 OPTIND=1
 while getopts ":jnh" OPT ; do
@@ -132,7 +137,7 @@ while [ "${*}" != "" ] ; do
             if [ $(grep -v "^#" "${LOGDIR}/${SOURCEFILENAME%.*}.framemd5" | md5 -q) = $(grep -v "^#" "${LOGDIR}/${SOURCEFILENAME%.*}${SUFFIX}.framemd5" | md5 -q) ] ; then
                 _report -dt "Everything looks safe. Going to delete the original."
                 _run_critical mediainfo -f --language=raw --output=XML "${SOURCEFILE}" > "${LOGDIR}/${SOURCEFILENAME%.*}_mediainfo.xml"
-                _run_critical rm -f -v "${SOURCEFILE}"
+                #_run_critical rm -f -v "${SOURCEFILE}"
             else
                 _report -wt "Not looking safe. Going to keep the original."
             fi
