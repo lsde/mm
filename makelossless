@@ -5,6 +5,7 @@ VERSION="1.0"
 SCRIPTDIR=$(dirname $(which "${0}"))
 . "${SCRIPTDIR}/mmfunctions" || { echo "Missing '${SCRIPTDIR}/mmfunctions'. Exiting." ; exit 1 ;};
 DEPENDENCIES=(ffmpeg ffprobe mediainfo)
+FFV1_VERSION_EXPECTED=3.4
 _initialize_make
 
 _usage(){
@@ -22,12 +23,7 @@ _usage(){
 [ "${#}" = 0 ] && _usage
 
 _get_ffv1_version(){
-    FFV1_VERSION=$(ffmpeg -debug 1 -i "${1}" -vframes 1 -f null - 2>&1 | grep -m 1 "^\[ffv1" | grep -o "ver:[^ ]*" | cut -d":" -f2)
-}
-
-_check_saturation(){
-    # with early ffv1, using a saturation level check to attempt to detect corruption, since there is no embedded fixity before version 3
-    signalstats,metadata=print:key=lavfi.signalstats.SATMAX:value=170:function=greater:file=/tmp/hi
+    FFV1_VERSION=$(ffmpeg -debug 1 -i "${1}" -vframes 1 -f null - 2>&1 | grep -m 1 "^\[ffv1" | grep -o "ver:[0-9.]*" | cut -d":" -f2)
 }
 
 # command-line options to set mediaid and original variables
@@ -115,20 +111,28 @@ while [ "${*}" != "" ] ; do
             MIDDLEOPTIONS+=(-c:a copy)
         fi
         _get_codectagstring "${SOURCEFILE}"
-        if [[ "${CODEC_TAG_STRING}" == "ffv1" ]] ; then
+        if [[ "${CODEC_TAG_STRING}" == "FFV1" ]] ; then
             _get_ffv1_version "${SOURCEFILE}"
+            echo "hey $FFV1_VERSION in ${SOURCEFILE}"
+            
         fi
-        echo "hi ${FFV1_VERSION} ${CODEC_TAG_STRING}"
+        exit
         if [[ "${CODEC_TAG_STRING}" == "2vuy" || \
               "${CODEC_TAG_STRING}" == "v210" || \
-             ("${CODEC_TAG_STRING}" == "FFV1" && "${FFV1_VERSION}" -lt "3") ]] ; then
+             ("${CODEC_TAG_STRING}" == "FFV1" && $(echo "${FFV1_VERSION} -lt ${FFV1_VERSION_EXPECTED}" | bc)) ]] ; then
             _report -dt "${SOURCEFILENAME} is ${CODEC_TAG_STRING}, starting encode"
             _run mkdir -p "${OUTPUTDIR}" "${LOGDIR}"
             _prep_ffmpeg_log
 
             _filter_to_middle_option
-
-            _run_critical ffmpeg ${INPUTOPTIONS[@]} -i "${SOURCEFILE}"  ${MIDDLEOPTIONS[@]} "${OUTPUTDIR}/${SOURCEFILENAME%.*}${SUFFIX}.mkv" -f framemd5 -an "${LOGDIR}/${SOURCEFILENAME%.*}.framemd5"
+            if [[ -f "${LOGDIR}/${SOURCEFILENAME%.*}.framemd5" ]] ; then
+                _report -dt "Creating a framemd5 report for ${SOURCEFILENAME}."
+                _run_critical ffmpeg ${INPUTOPTIONS[@]} -i "${SOURCEFILE}"  ${MIDDLEOPTIONS[@]} "${OUTPUTDIR}/${SOURCEFILENAME%.*}${SUFFIX}.mkv" -f framemd5 -an "${LOGDIR}/${SOURCEFILENAME%.*}.framemd5"
+            else
+                _report -dt "A framemd5 report for ${SOURCEFILENAME} already exists, verifying that first."
+                _run_critical ffmpeg ${INPUTOPTIONS[@]} -i "${SOURCEFILE}" -f framemd5 -an "${LOGDIR}/${SOURCEFILENAME}_$(_get_iso8601_c).framemd5"
+                
+            fi
             if [ "${CODEC_TAG_STRING}" == "2vuy" ] ; then
                 _run_critical ffmpeg ${INPUTOPTIONS[@]} -i "${OUTPUTDIR}/${SOURCEFILENAME%.*}${SUFFIX}.mkv" -f framemd5 -pix_fmt uyvy422 -an "${LOGDIR}/${SOURCEFILENAME%.*}${SUFFIX}.framemd5"
             else
